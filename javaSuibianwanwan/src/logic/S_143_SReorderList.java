@@ -1,7 +1,7 @@
 package logic;
 
 // 143
-public class SReorderList {
+public class S_143_SReorderList {
 
     public void reorderList(ListNode head) {
         reverse(head, false);

@@ -5,7 +5,7 @@ import java.util.Map;
 import java.util.Stack;
 
 // 20
-public class SIsValid {
+public class S_20_SIsValid {
     public boolean isValid(String s) {
         Stack<Character> stack = new Stack<>();
         Map<Character, Character> characterMap = new HashMap<>();

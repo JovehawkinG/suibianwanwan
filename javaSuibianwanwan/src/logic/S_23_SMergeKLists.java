@@ -1,7 +1,7 @@
 package logic;
 
 // 23
-class SMergeKLists {
+class S_23_SMergeKLists {
 
     public static void main(String[] args) {
         ListNode l1 = new ListNode(10);
@@ -13,7 +13,7 @@ class SMergeKLists {
         ListNode s3 = new ListNode(5, s2);
 
         ListNode[] lists = new ListNode[]{l3, s3};
-        SMergeKLists sMergeKLists = new SMergeKLists();
+        S_23_SMergeKLists sMergeKLists = new S_23_SMergeKLists();
         System.out.println(sMergeKLists.mergeKLists(lists).toString());
     }
 

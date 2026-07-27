@@ -3,7 +3,7 @@ package logic;
 import java.util.*;
 
 // 199
-public class SRightSideView {
+public class S_199_SRightSideView {
 
     public List<Integer> rightSideView(TreeNode root) {
         List<Integer> result = new ArrayList<>();
