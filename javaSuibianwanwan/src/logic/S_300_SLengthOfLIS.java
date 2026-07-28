@@ -1,8 +1,7 @@
-package test;
+package logic;
 
-public class MySAXReader {
-
-    public int maxLength(int[] nums) {
+public class S_300_SLengthOfLIS {
+    public int lengthOfLIS(int[] nums) {
         if (nums == null || nums.length == 0) {
             return 0;
         }
@@ -22,5 +21,4 @@ public class MySAXReader {
         }
         return result;
     }
-
 }

@@ -1,4 +1,4 @@
-package juc;
+package practice.juc;
 
 public class ThreadPrintMain {
 
