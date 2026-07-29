@@ -14,8 +14,12 @@ public class S_124_SMaxPathSum {
             int leftNum = Math.max(calcSingleNum(root.left), 0);
             int rightNum = Math.max(calcSingleNum(root.right), 0);
             int maxSingleNum = leftNum + root.val + rightNum;
-            maxSingleNum = Math.max(maxSingleNum, maxPathSum(root.left));
-            maxSingleNum = Math.max(maxSingleNum, maxPathSum(root.right));
+            if (root.left != null) {
+                maxSingleNum = Math.max(maxSingleNum, maxPathSum(root.left));
+            }
+            if (root.right != null) {
+                maxSingleNum = Math.max(maxSingleNum, maxPathSum(root.right));
+            }
             return maxSingleNum;
     }
 
