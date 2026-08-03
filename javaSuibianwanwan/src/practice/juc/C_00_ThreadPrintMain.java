@@ -1,6 +1,7 @@
 package practice.juc;
 
-public class ThreadPrintMain {
+// 线程的顺序打印
+public class C_00_ThreadPrintMain {
 
     private static int num = 0;
     private static int max_num = 100;
