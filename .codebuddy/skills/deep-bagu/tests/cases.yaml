@@ -9,9 +9,11 @@ cases:
     input: "线上 Java 服务频繁 Full GC 后 OOM，如何排查和调优"
     expected_tier: L3
     must_include:
+      - "一句话结论"
       - "GC 日志字段"
       - "jstat 或 jcmd 采集"
-      - "堆 dump 风险提示"
+      - "可复现示例或参数"
+      - "观察点（GC 字段或线程栈）"
       - "版本标注"
       - "回滚条件"
     forbidden_categories:
@@ -24,9 +26,10 @@ cases:
     input: "解释一下什么是 TLAB"
     expected_tier: L1
     must_include:
-      - "一句话本质"
+      - "一句话结论"
       - "关键机制"
       - "一个可核对验证方式"
+      - "一个坑"
     forbidden_categories:
       - 答题口吻类
       - 求职考核类
@@ -36,6 +39,8 @@ cases:
     input: "MySQL 线上偶发死锁，如何定位和解决"
     expected_tier: L2
     must_include:
+      - "一句话结论"
+      - "可复现的建表与 SQL"
       - "innodb status"
       - "锁等待"
       - "执行计划"
@@ -49,6 +54,7 @@ cases:
     input: "Redis 集群出现热 key，如何排查和治理"
     expected_tier: L2
     must_include:
+      - "一句话结论"
       - "INFO 指标"
       - "slowlog"
       - "热 key 采样"
@@ -59,16 +65,43 @@ cases:
     max_lines: 120
 
   - id: spring_circular_dependency
-    input: "Spring 循环依赖是怎么处理的，线上启动失败怎么排查"
+    input: "Spring 循环依赖是怎么解决的"
     expected_tier: L2
     must_include:
-      - "Bean 生命周期"
-      - "代理链"
-      - "启动日志"
+      - "一句话结论"
+      - "三级缓存"
+      - "可运行的最小示例"
+      - "BREAKPOINT 或断点位置"
+      - "观察变量"
       - "版本差异"
     forbidden_categories:
       - 伪造细节类
       - 答题口吻类
+    max_lines: 120
+
+  - id: spring_demo_boundary
+    input: "Spring 循环依赖是怎么解决的，给我建个能打断点的 demo"
+    expected_tier: L2
+    must_include:
+      - "文件清单"
+      - "运行命令"
+      - "断点位置"
+      - "预期输出"
+    forbidden_categories:
+      - 伪造细节类
+    max_lines: 250
+
+  - id: no_demo_by_default
+    input: "AQS 的 CLH 队列是怎么工作的"
+    expected_tier: L2
+    must_include:
+      - "一句话结论"
+      - "可运行示例"
+      - "断点位置"
+      - "未创建文件"
+    forbidden_categories:
+      - 答题口吻类
+      - 伪造细节类
     max_lines: 120
 
   - id: distributed_retry_storm

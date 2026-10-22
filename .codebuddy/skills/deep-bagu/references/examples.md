@@ -2,145 +2,179 @@
 
 # 好例与反例
 
-## 1. Golden Example：JVM OOM 复盘骨架（L3）
+对齐模板 `0. 一句话结论` ~ `6. 落地与命令`，重点看示例与断点的写法。
 
-### 0. 结论与适用范围
+## 1. Golden Example：Spring 循环依赖（L2）
 
-- 结论：先区分堆、元空间、直接内存、native thread 四类 OOM，再决定采集与调优。
-- 适用版本：需标注 JDK 8/11/17/21；不同版本默认 GC 与元空间行为不同。
-- 风险等级：堆 dump 与详细 NMT 需低峰期、审批、限磁盘余量。
+### 0. 一句话结论
 
-### 1. 本质一句话
+字段注入的循环依赖靠三级缓存解决：`singletonFactories` 提前暴露对象工厂，让 B 在 A 未完成初始化时先拿到 A 的引用。构造器注入的循环依赖无法用三级缓存解决，直接抛 `BeanCurrentlyInCreationException`。适用 Spring Framework 5.3.x / 6.x。
 
-OOM 不是“内存不够”一个结论，而是某类内存区域在特定分配路径上无法继续扩展或分配。
+### 1. 核心机制
 
-### 2. 实战故障现场
+1. 创建 A → 实例化后、填充属性前，把 `ObjectFactory` 放入 `singletonFactories`。
+2. 填充 A 的属性时发现依赖 B → 转去创建 B。
+3. B 填充属性时发现依赖 A → 再次 `getBean("a")`，从 `singletonFactories` 取工厂并调用 `getObject()`，得到 A 的早期引用，放入 `earlySingletonObjects`。
+4. B 完成创建后回到 A，A 继续填充属性并初始化，最后进入 `singletonObjects`。
 
-- 常见错误结构：`Java heap space`、`Metaspace`、`Direct buffer memory`、`unable to create new native thread`。
-- 典型场景：大对象、缓存无界、动态类生成、Netty 堆外内存、线程池无界。
-- 后果：服务不可用、频繁 Full GC、容器被 kill、请求超时。
-- 误判提示：GC 停顿可能被误判为 CPU 问题；元空间增长可能被误判为堆泄漏。
+### 2. 最小示例
 
-### 3. 底层原理
+```java
+// JDK 17 + Spring Framework 6.x，原生容器即可复现，不依赖 Spring Boot
+@Configuration
+@ComponentScan
+public class CircularDemoApplication {
 
-- 堆：分代、TLAB、对象晋升、GC 回收器差异。
-- 元空间：类加载器、动态代理、字节码生成。
-- 直接内存：`DirectByteBuffer`、Netty 池化、`MaxDirectMemorySize`。
-- native thread：线程栈大小、线程数、系统限制。
-- 源码只给关键类/方法/机制路径，不伪造行号。
+    public static void main(String[] args) {
+        new AnnotationConfigApplicationContext(CircularDemoApplication.class);
+    }
 
-### 4. 工具与命令
+    @Component
+    static class A {
+        @Autowired
+        private B b;                    // BREAKPOINT 1：观察 a 已实例化、b 仍为 null
+    }
 
-- 轻量：`jcmd VM.version`、`jstat -gcutil`、`jcmd GC.heap_info`、`jcmd VM.flags`。
-- 线程：`jstack -l`、`jcmd Thread.print -l`。
-- 堆：`jmap -histo:live`、`jcmd GC.heap_dump`，需风险提示。
-- NMT：`jcmd VM.native_memory summary`，需启动参数。
-- 分析：MAT 支配树与引用链、GCViewer 停顿分布。
+    @Component
+    static class B {
+        @Autowired
+        private A a;                    // BREAKPOINT 2：观察 a 是通过 ObjectFactory 提前暴露的引用
+    }
+}
+```
 
-### 5. 参数与调优
+预期现象：应用正常启动；把 `A` 的注入方式改成构造器 `A(B b)` 后启动失败，异常为 `BeanCurrentlyInCreationException`。
 
-- `-Xms`/`-Xmx`：堆基线，需结合容器限制与晋升速率。
-- `-Xss`：线程栈，线程数多时影响 native 内存。
-- `-XX:MetaspaceSize`/`-XX:MaxMetaspaceSize`：元空间边界。
-- `-XX:MaxDirectMemorySize`：堆外内存上限。
-- 调优需给基线、灰度、观察指标、回滚条件。
+> Spring Boot 2.6+ 默认 `spring.main.allow-circular-references=false`，同一份代码放进 Boot 应用会直接失败；演示三级缓存需显式设为 true，或使用上面的原生容器写法。
 
-### 6. 常见坑与误判
+### 3. 源码链路与断点
 
-- 只加 `-Xmx` 不查泄漏。
-- 容器内未设置合理堆上限，忽略容器限制。
-- 线程池无界导致 native thread OOM。
-- 动态代理与类加载器泄漏导致元空间增长。
-- 堆外内存泄漏只看堆指标。
+| 步骤 | 类#方法 | 断点条件 | 观察变量 |
+|---|---|---|---|
+| 1 | `DefaultSingletonBeanRegistry#getSingleton(String, boolean)` | beanName = "a"，allowEarlyReference = false | `singletonObjects` 无 a，返回 null |
+| 2 | `AbstractAutowireCapableBeanFactory#doCreateBean` | beanName = "a"，进入 `addSingletonFactory` | `singletonFactories` 出现 a 的 `ObjectFactory` |
+| 3 | `AbstractAutowireCapableBeanFactory#populateBean` | beanName = "a" | `b` 字段为 null，即将触发 `getBean("b")` |
+| 4 | `DefaultSingletonBeanRegistry#getSingleton(String, boolean)` | beanName = "a"，allowEarlyReference = true | `earlySingletonObjects` 仍为空，随后从 `singletonFactories` 取工厂 |
 
-### 7. 生产落地建议
+预期调用栈（自上而下）：
 
-- 监控：GC 次数与耗时、老年代使用率、元空间、直接内存、线程数。
-- 告警：持续 Full GC、老年代高位、元空间持续增长、线程数逼近上限。
-- 排障链路：错误类型 → 采集轻量指标 → 线程栈 → 决定是否 dump。
-- 变更：参数调整灰度、观察、回滚；dump 文件脱敏与权限控制。
+```text
+getBean("a")
+└─ doGetBean
+   └─ createBean
+      └─ doCreateBean
+         ├─ addSingletonFactory("a", ObjectFactory)
+         └─ populateBean("a")
+            └─ getBean("b")
+               └─ doCreateBean("b")
+                  └─ populateBean("b")
+                     └─ getBean("a") → getSingleton("a", true)
+                        └─ singletonFactories.get("a").getObject()
+```
 
-## 2. Golden Example：MySQL 死锁排查骨架（L2/L3）
+### 4. 常见坑与误判
 
-### 0. 结论与适用范围
+- 以为三级缓存能解决构造器循环依赖：不能，构造器参数必须在实例化前解析，此时对象还不存在。
+- 以为 `earlySingletonObjects` 一开始就有值：它只在第二次获取同一 Bean 时被填充。
+- 加了 `@Async` / `@Transactional` 后循环依赖报错：早期引用可能触发代理创建，行为与无代理时不同。
+- Boot 2.6+ 默认禁止循环依赖，误判为 Spring 版本 bug。
 
-- 结论：死锁排查先看等待图与持有关系，再回到索引、事务边界与隔离级别。
-- 适用版本：需标注 MySQL 5.7/8.0；锁等待视图与默认隔离级别行为需确认。
-- 风险等级：锁分析、DDL、全表扫描需低峰期与审批。
+### 5. 延伸追问
 
-### 1. 本质一句话
+- 为什么需要第三级 `singletonFactories` 而不是直接放早期对象：为了在需要时才对原始对象生成代理。
+- `@Lazy` 如何打断循环：注入代理对象，把真实创建推迟到首次调用。
+- 构造器注入的循环依赖能否用 setter 改造解决：可以，但会掩盖设计问题。
 
-死锁是多个事务形成循环等待，数据库只能回滚其中一个事务来打破循环。
+### 6. 落地与命令
 
-### 2. 实战故障现场
+- 排查启动失败：看异常栈顶是 `BeanCurrentlyInCreationException` 还是 `BeanCreationException`，前者优先查构造器注入链。
+- 生产不建议开启 `allow-circular-references`，应拆依赖或引入事件解耦。
 
-- 错误结构：死锁检测、回滚、锁等待超时。
-- 典型场景：相反顺序更新、间隙锁冲突、唯一键冲突、长事务。
-- 后果：业务失败、重试放大、连接池耗尽。
-- 误判提示：偶发超时不一定慢查询，可能是锁等待。
+## 2. Golden Example：MySQL 死锁（L2）
 
-### 3. 底层原理
+### 0. 一句话结论
 
-- 行锁、间隙锁、下一键锁、意向锁。
-- 等待图、事务回滚、隔离级别影响。
-- 索引缺失导致锁范围扩大。
-- MVCC 与当前读的差异。
+死锁是多个事务形成循环等待，InnoDB 通过等待图检测并回滚代价较小的事务。定位靠 `SHOW ENGINE INNODB STATUS` 的 `LATEST DETECTED DEADLOCK` 段，治理靠统一加锁顺序与缩短事务。适用 MySQL 8.0，RR 隔离级别。
 
-### 4. 工具与命令
+### 1. 核心机制
 
-- `SHOW ENGINE INNODB STATUS\G`：最近死锁、等待事务、持有事务。
-- `performance_schema.data_lock_waits`：当前锁等待。
-- `EXPLAIN`/`EXPLAIN ANALYZE`：访问路径与索引。
-- 慢日志：`Query_time`、`Lock_time`、`Rows_examined`。
+1. 事务 1 持有 id=1 的行锁，请求 id=2。
+2. 事务 2 持有 id=2 的行锁，请求 id=1。
+3. 等待图成环，InnoDB 选一个事务回滚，报 `Deadlock found when trying to get lock`。
+4. 间隙锁、唯一键冲突、索引缺失都会扩大锁范围，提高成环概率。
 
-### 5. 参数与调优
+### 2. 最小示例
 
-- 事务隔离级别：按版本确认默认值。
-- 锁等待超时：结合业务重试与用户体验。
-- 索引优化：缩小锁范围。
-- 事务拆分：缩短持有时间。
-- 变更需灰度与回滚。
+```sql
+-- MySQL 8.0，RR 隔离级别，两个会话按顺序执行
+CREATE TABLE account (id INT PRIMARY KEY, balance INT NOT NULL) ENGINE = InnoDB;
+INSERT INTO account VALUES (1, 100), (2, 100);
 
-### 6. 常见坑与误判
+-- 会话 1
+BEGIN;
+UPDATE account SET balance = balance - 10 WHERE id = 1;
 
-- 只优化 SQL 不看事务边界。
-- 忽略间隙锁与唯一键冲突。
-- 重试无退避导致放大。
-- 长事务持有锁。
-- 索引缺失导致锁范围扩大。
+-- 会话 2
+BEGIN;
+UPDATE account SET balance = balance - 10 WHERE id = 2;
 
-### 7. 生产落地建议
+-- 会话 1：等待会话 2 释放 id=2
+UPDATE account SET balance = balance + 10 WHERE id = 2;
 
-- 监控：锁等待、死锁次数、慢日志、连接池活跃数。
-- 告警：死锁增长、锁等待 P99、连接池逼近上限。
-- 排障链路：死锁日志 → 等待图 → 执行计划 → 事务边界。
-- 变更：索引与事务改造灰度、观察、回滚。
+-- 会话 2：触发死锁，其中一个事务被回滚
+UPDATE account SET balance = balance + 10 WHERE id = 1;
+```
+
+预期现象：会话 2 返回 `ERROR 1213 (40001): Deadlock found when trying to get lock; try restarting transaction`。
+
+### 3. 源码链路与断点
+
+| 步骤 | 观察点 | 命令 | 关键字段 |
+|---|---|---|---|
+| 1 | 最近一次死锁 | `SHOW ENGINE INNODB STATUS\G` | `LATEST DETECTED DEADLOCK` 段的两个事务 SQL |
+| 2 | 当前锁等待 | `performance_schema.data_lock_waits` | `REQUESTING_ENGINE_LOCK_ID`、`BLOCKING_ENGINE_LOCK_ID` |
+| 3 | 持有与等待的锁 | `performance_schema.data_locks` | `LOCK_TYPE`、`LOCK_MODE`、`LOCK_DATA` |
+| 4 | 访问路径 | `EXPLAIN UPDATE ...` | `type`、`key`、`rows` |
+
+无代码断点，用上述视图代替：`LOCK_DATA` 能看到具体锁在哪一行或哪个间隙。
+
+### 4. 常见坑与误判
+
+- 只看慢日志：死锁事务可能执行很快，慢日志里没有记录。
+- 以为死锁一定发生在两条相反顺序的 UPDATE：间隙锁与唯一键冲突也会成环。
+- 索引缺失导致锁全表，误判为"数据量小不可能死锁"。
+- 应用层重试无退避，死锁回滚后立刻重试再次成环。
+
+### 5. 延伸追问
+
+- 为什么 RR 下需要间隙锁：防止幻读，代价是锁范围扩大。
+- 死锁与锁等待超时的区别：前者由检测机制主动回滚，后者是等不到锁自行超时。
+- 如何用 `innodb_print_all_deadlocks` 把死锁写入错误日志。
+
+### 6. 落地与命令
+
+- 开 `innodb_print_all_deadlocks=ON`（需重启或按版本确认是否支持动态修改），把死锁落到错误日志。
+- 统一加锁顺序、缩短事务、补全索引，是比调大 `innodb_lock_wait_timeout` 更有效的治理方式。
+- 应用层重试需带退避与幂等，避免放大。
 
 ## 3. Bad Example：概念堆砌
 
 问题：
 
-- 只列名词，不给错误类型、参数、工具、故障场景。
-- 默认值无版本。
-- 伪造日志与源码行号。
+- 开头铺垫三段背景，结论藏在最后。
+- 只列名词，没有示例代码，没有断点，没有观察变量。
+- 默认值无版本，源码给行号。
 - 危险命令无风险提示。
-- 没有监控、告警、回滚。
 
 修正：
 
-- 按主题证据矩阵补证据。
-- 版本标注；不确定写“需按版本确认”。
-- 日志标“示例结构”。
+- 结论前置，3 行内说清。
+- 补最小可运行示例与 `// BREAKPOINT` 标注。
+- 源码只给类名、方法名、断点条件、预期调用栈。
 - 危险命令加低峰期、审批、脱敏、回滚。
-- 补监控指标与告警阈值。
 
-## 4. 输出前检查清单
+## 4. 示例自查
 
-- 是否结论先行并标注适用范围。
-- 是否至少 2 类可核对证据。
-- 是否标注版本与默认值来源。
-- 是否避免伪造日志、行号、压测数据。
-- 危险命令是否有风险提示。
-- 是否给基线、灰度、观察指标、回滚条件。
-- 是否完成脱敏与术语过滤。
-- 是否符合 L1/L2/L3 长度档位。
+- 示例是否含完整 import 与必要配置，能直接运行。
+- 是否标注 2~4 处断点与观察变量。
+- 是否给出 5~8 帧预期调用栈。

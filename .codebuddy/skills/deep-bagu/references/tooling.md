@@ -122,17 +122,16 @@ redis-cli --scan --pattern '<prefix>*' --count 100
 
 ## 6. Spring
 
-采集点：
+断点与观察：
 
-- 启动日志：Bean 创建耗时、条件装配报告、代理创建异常。
-- 条件装配报告：`--debug` 输出，确认自动配置命中与排除。
-- 代理链：AOP 切面顺序、事务代理、循环依赖相关日志。
-- 线程栈：启动卡住时抓取线程栈，定位锁与初始化阻塞。
-- 动态代理与启动耗时分析避免频繁重启生产实例。
+- 常用断点：`DefaultListableBeanFactory#preInstantiateSingletons` 看创建顺序，`AbstractAutowireCapableBeanFactory#doCreateBean` 看实例化/填充/初始化三阶段，`DefaultSingletonBeanRegistry#getSingleton` 看三级缓存。
+- 观察变量：`singletonObjects`、`earlySingletonObjects`、`singletonFactories`、`beanDefinitionNames`。
+- 条件装配：`--debug` 的条件报告，或 `/actuator/conditions`（需鉴权）。
+- 启动耗时：`ApplicationStartup` 采集 Bean 级 step，避免反复重启生产实例。
 
 ## 7. 分布式 / 中间件
 
-采集点：
+观察点：
 
 - 超时、重试、幂等、熔断、降级、限流指标。
 - 链路追踪：调用链、耗时分布、错误码、重试次数。
@@ -140,13 +139,3 @@ redis-cli --scan --pattern '<prefix>*' --count 100
 - 压测：环境、数据量、并发量、持续时间、P99/P999。
 - 变更需灰度与回滚，压测在隔离环境进行。
 
-## 8. 最小证据包
-
-| 主题 | 最小证据包 |
-|---|---|
-| JVM / GC | 版本、生效参数、GC 趋势、堆/元空间指标、1 份线程栈 |
-| 并发 | 线程栈、锁等待链、线程池指标、关键接口耗时 |
-| MySQL | 慢日志、执行计划、锁等待、事务隔离级别 |
-| Redis | `INFO` 关键指标、慢日志、大 key/热 key 采样、内存趋势 |
-| Spring | 启动日志、条件装配报告、线程栈、代理链信息 |
-| 分布式 | 链路追踪、超时重试指标、熔断指标、压测数据 |
